@@ -106,11 +106,11 @@ Item {
         var hours = _hourlyCoverageHours();
         if (hours <= 0 || !dateStr)
             return false;
-        var targetStart = new Date(dateStr + "T00:00:00");
-        if (isNaN(targetStart.getTime()))
+        var targetStartMs = weatherRoot ? weatherRoot.locationDateTimeToEpoch(dateStr, "00:00") : NaN;
+        if (isNaN(targetStartMs))
             return false;
         var horizon = new Date(Date.now() + hours * 60 * 60 * 1000);
-        return targetStart.getTime() > horizon.getTime();
+        return targetStartMs > horizon.getTime();
     }
 
     function _emptyHourlyMessage(dateStr) {
@@ -127,12 +127,11 @@ Item {
     function _forecastModelCount() {
         if (!weatherRoot || weatherRoot.dailyData.length === 0)
             return 0;
-        var total = Math.min(Plasmoid.configuration.forecastDays, weatherRoot.dailyData.length);
-        return showToday ? total : Math.max(0, total - 1);
+        return weatherRoot.forecastDisplayCount(showToday, Plasmoid.configuration.forecastDays);
     }
 
     function _viewIndexToDataIndex(viewIndex) {
-        return showToday ? viewIndex : viewIndex + 1;
+        return weatherRoot ? (weatherRoot.firstForecastDataIndex(showToday) + viewIndex) : viewIndex;
     }
 
     function _dateStrForViewIndex(viewIndex) {
@@ -299,7 +298,7 @@ Item {
     function _initialAutoOpenDateStr() {
         if (!weatherRoot || weatherRoot.dailyData.length === 0 || expandAll || !autoOpen)
             return "";
-        var firstDataIndex = forecastRoot.showToday ? 0 : 1;
+        var firstDataIndex = weatherRoot.firstForecastDataIndex(forecastRoot.showToday);
         if (firstDataIndex >= weatherRoot.dailyData.length)
             return "";
         return weatherRoot.dailyData[firstDataIndex].dateStr || "";
@@ -361,7 +360,7 @@ Item {
             dateStr,
             _hourlyDataVersions[dateStr] || 0,
             showSunEvents ? 1 : 0,
-            dataIndex === 0 ? 1 : 0,
+            (weatherRoot && dateStr === weatherRoot.locationDateString()) ? 1 : 0,
             sunriseText,
             sunsetText
         ].join("|");
@@ -369,10 +368,9 @@ Item {
             return _hourlyDisplayCache[cacheKey];
 
         var nowMins = -1;
-        if (dataIndex === 0) {
-            var now = new Date();
-            nowMins = now.getHours() * 60 + now.getMinutes() - 60;
-        }
+        var todayStr = weatherRoot ? weatherRoot.locationDateString() : "";
+        if (dateStr.length > 0 && dateStr === todayStr)
+            nowMins = (weatherRoot ? weatherRoot.locationNowMins() : -1) - 60;
 
         var sunriseMins = _timeToMinutes(sunriseText);
         var sunsetMins = _timeToMinutes(sunsetText);
@@ -430,10 +428,10 @@ Item {
             var kpEntry = weatherRoot
                 ? (weatherRoot.kpForecastForHour(dateStr, sourceHourly.hour || "") || weatherRoot.kpForecastForDate(dateStr))
                 : null;
-            item.kpText = (!kpEntry || isNaN(kpEntry.kp))
+            item.kpText = (!kpEntry || kpEntry.kp === null || kpEntry.kp === undefined || isNaN(kpEntry.kp))
                 ? i18n("No info")
                 : "Kp " + kpEntry.kp.toFixed(1) + " (" + (kpEntry.gScale || "G0") + ")";
-            item.uvText = (sourceHourly.uvIndex === undefined || isNaN(sourceHourly.uvIndex))
+            item.uvText = (sourceHourly.uvIndex === null || sourceHourly.uvIndex === undefined || isNaN(sourceHourly.uvIndex))
                 ? "--"
                 : "UV " + sourceHourly.uvIndex.toFixed(1);
             item.precipText = weatherRoot ? weatherRoot.precipSumText(sourceHourly.precipMm) : "--";
@@ -464,9 +462,9 @@ Item {
         _expandAllActiveFetches = 0;
         _perDayHourlyData = {};
         var loading = {};
-        var total    = Math.min(Plasmoid.configuration.forecastDays, weatherRoot.dailyData.length);
-        var startDi  = forecastRoot.showToday ? 0 : 1;
-        for (var di = startDi; di < total; di++) {
+        var startDi  = weatherRoot.firstForecastDataIndex(forecastRoot.showToday);
+        var endDi    = Math.min(weatherRoot.dailyData.length, startDi + Plasmoid.configuration.forecastDays);
+        for (var di = startDi; di < endDi; di++) {
             var dateStr = weatherRoot.dailyData[di].dateStr || "";
             if (!dateStr) continue;
             if (_isDateOutsideHourlyCoverage(dateStr)) {
@@ -588,7 +586,7 @@ Item {
             return;
         }
         if (!autoOpen) return;
-        var firstDataIndex = forecastRoot.showToday ? 0 : 1;
+        var firstDataIndex = weatherRoot.firstForecastDataIndex(forecastRoot.showToday);
         if (firstDataIndex >= weatherRoot.dailyData.length) return;
         forecastRoot.expandedIndex = 0;
         forecastRoot._loadSingleExpandHourly(weatherRoot.dailyData[firstDataIndex].dateStr || "");
@@ -940,17 +938,12 @@ Item {
                                     width: parent.width
                                     elide: Text.ElideRight
                                     text: {
-                                        var di = dataIndex;
-                                        if (di === 0)
+                                        var ds = weatherRoot.dailyData[dataIndex].dateStr || "";
+                                        if (weatherRoot && ds === weatherRoot.locationDateString())
                                             return i18n("Today");
-                                        var ds = weatherRoot.dailyData[di].dateStr;
                                         if (!ds)
                                             return "";
-                                        var parts = ds.split("-");
-                                        if (parts.length !== 3)
-                                            return "";
-                                        var d = new Date(parts[0], parts[1] - 1, parts[2]);
-                                        return Qt.locale().dayName(d.getDay(), Locale.LongFormat);
+                                        return weatherRoot ? weatherRoot.dayNameForDateStr(ds, Locale.LongFormat) : "";
                                     }
                                     color: forecastRoot.themeTextColor
                                     font: weatherRoot.wf(12, true)
@@ -960,9 +953,9 @@ Item {
                                         var ds = weatherRoot.dailyData[dataIndex].dateStr || "";
                                         if (!ds)
                                             return "";
-                                        var d = new Date(ds);
-                                        var fmt = Qt.locale().dateFormat(Locale.ShortFormat);
-                                        return Qt.formatDate(d, fmt);
+                                        return weatherRoot
+                                            ? weatherRoot.formatDateStrForDisplay(ds, Qt.locale().dateFormat(Locale.ShortFormat))
+                                            : "";
                                     }
                                     color: forecastRoot.themeTextColor
                                     font: weatherRoot.wf(9, false)
@@ -1083,7 +1076,7 @@ Item {
                                 Label {
                                     text: {
                                         var e = weatherRoot.kpForecastForDate(weatherRoot.dailyData[dataIndex].dateStr || "");
-                                        if (!e || isNaN(e.kp)) return i18n("No information");
+                                        if (!e || e.kp === null || e.kp === undefined || isNaN(e.kp)) return i18n("No information");
                                         return "Kp " + e.kp.toFixed(1) + " (" + (e.gScale || "G0") + ")";
                                     }
                                     color: Qt.rgba(forecastRoot.themeTextColor.r, forecastRoot.themeTextColor.g, forecastRoot.themeTextColor.b, 0.72)
@@ -1115,7 +1108,7 @@ Item {
                                 Label {
                                     text: {
                                         var uv = weatherRoot.dailyData[dataIndex].uvMax;
-                                        return isNaN(uv) ? "--" : "UV " + uv.toFixed(1);
+                                        return (uv === null || uv === undefined || isNaN(uv)) ? "--" : "UV " + uv.toFixed(1);
                                     }
                                     color: Qt.rgba(forecastRoot.themeTextColor.r, forecastRoot.themeTextColor.g, forecastRoot.themeTextColor.b, 0.72)
                                     font: weatherRoot.wf(10, false)
@@ -1806,7 +1799,7 @@ Item {
                                 serviceRoot: weatherRoot
                                 wiFont: wiFont
                                 hourlyItems: _dayDisplayItems
-                                autoScrollToCurrent: dataIndex === 0
+                                autoScrollToCurrent: weatherRoot && (weatherRoot.dailyData[dataIndex].dateStr || "") === weatherRoot.locationDateString()
                             }
                         }
                     }

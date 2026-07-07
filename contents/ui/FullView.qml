@@ -299,7 +299,7 @@ Rectangle {
                     running: headerDateTimeLabel.visible
                     triggeredOnStart: true
                     onTriggered: {
-                        var now = new Date();
+                        var now = weatherRoot ? weatherRoot.locationNowDate() : new Date();
                         var dateStr = headerDateTimeLabel._formatDate(now);
                         var timeStr = headerDateTimeLabel._formatTime(now);
                         var sep = (dateStr.length > 0 && timeStr.length > 0) ? "  " : "";
@@ -622,7 +622,7 @@ Rectangle {
             implicitHeight: (children && children[currentIndex]) ? children[currentIndex].implicitHeight : 0
 
             // Reach the (lazily-loaded) ForecastView for external activation.
-            readonly property var forecastViewItem: forecastLoader.item || null
+            readonly property var forecastViewItem: forecastScrollView.forecastViewItem
 
             onCurrentIndexChanged: {
                 // ForecastView.onVisibleChanged already triggers activateForecast()
@@ -636,60 +636,50 @@ Rectangle {
             // ── Details tab ───────────────────────────────────────────
             Item {
                 id: detailsTab
-                implicitHeight: detailsLoader.item ? detailsLoader.item.implicitHeight : 220
-                Loader {
-                    id: detailsLoader
+                implicitHeight: detailsView.implicitHeight
+                DetailsView {
+                    id: detailsView
                     anchors.fill: parent
-                    asynchronous: true
-                    active: detailsTab.StackLayout.isCurrentItem || (item !== null && fullView._keepHiddenTabs)
-                    sourceComponent: DetailsView {
-                        weatherRoot: fullView.weatherRoot
-                    }
-                }
-                BusyIndicator {
-                    anchors.centerIn: parent
-                    running: detailsLoader.status === Loader.Loading
-                    visible: running
+                    weatherRoot: fullView.weatherRoot
                 }
             }
 
             // ── Forecast tab ──────────────────────────────────────────
             Item {
                 id: forecastTab
-                readonly property bool shouldPrewarm: !!(fullView.weatherRoot
-                    && fullView.weatherRoot.dailyData
-                    && fullView.weatherRoot.dailyData.length > 0
-                    && Plasmoid.configuration.forecastAutoOpen !== false
-                    && Plasmoid.configuration.forecastExpandAll !== true)
-                implicitHeight: forecastLoader.item ? forecastLoader.item.implicitHeight : 220
-                Loader {
-                    id: forecastLoader
+                implicitHeight: forecastScrollView.implicitHeight
+                ScrollView {
+                    id: forecastScrollView
                     anchors.fill: parent
-                    asynchronous: true
-                    active: forecastTab.StackLayout.isCurrentItem
-                        || (forecastTab.shouldPrewarm && !forecastLoader.item)
-                        || (item !== null && fullView._keepHiddenTabs)
-                    sourceComponent: ForecastView {
+                    clip: true
+                    property alias forecastViewItem: forecastView
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    implicitHeight: forecastView.implicitHeight
+
+                    ForecastView {
                         id: forecastView
                         weatherRoot: fullView.weatherRoot
+                        verticalScrollView: forecastScrollView.contentItem
+                        width: forecastScrollView.availableWidth
                     }
-                }
-                BusyIndicator {
-                    anchors.centerIn: parent
-                    running: forecastLoader.status === Loader.Loading
-                    visible: running
                 }
             }
 
             // ── Radar tab ─────────────────────────────────────────────
             Item {
                 id: radarTab
+                property bool wasLoaded: false
                 implicitHeight: radarLoader.item ? radarLoader.item.implicitHeight : 380
                 Loader {
                     id: radarLoader
                     anchors.fill: parent
                     asynchronous: true
-                    active: radarTab.StackLayout.isCurrentItem || (item !== null && fullView._keepHiddenTabs)
+                    active: radarTab.StackLayout.isCurrentItem || (radarTab.wasLoaded && fullView._keepHiddenTabs)
+                    onStatusChanged: {
+                        if (status === Loader.Ready)
+                            radarTab.wasLoaded = true;
+                    }
                     sourceComponent: RadarView {
                         weatherRoot: fullView.weatherRoot
                     }
